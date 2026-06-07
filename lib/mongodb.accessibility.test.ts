@@ -1,40 +1,44 @@
 import { describe, it, expect } from 'vitest';
 import dbConnect, { dbDisconnect } from './mongodb';
 
-describe('mongodb - Accessibility & Screen Reader Aria Compliance', () => {
-  it('exposes dbConnect as default export for screen reader label coordination', () => {
+describe('mongodb - Exports & Runtime/Env Guardrails', () => {
+  it('exports dbConnect as a default function', () => {
     expect(dbConnect).toBeDefined();
     expect(dbConnect).toBeInstanceOf(Function);
   });
 
-  it('provides dbDisconnect as a named export with focusable accessibility', () => {
+  it('exports dbDisconnect as a named function', () => {
     expect(dbDisconnect).toBeDefined();
     expect(dbDisconnect).toBeInstanceOf(Function);
   });
 
-  it('throws descriptive tooltip error when called from unsupported Edge runtime', async () => {
+  it('rejects with Edge runtime error when NEXT_RUNTIME is edge', async () => {
     const originalRuntime = process.env.NEXT_RUNTIME;
     process.env.NEXT_RUNTIME = 'edge';
-
-    await expect(dbConnect()).rejects.toThrow('MongoDB is not supported in the Edge runtime');
-
-    process.env.NEXT_RUNTIME = originalRuntime;
+    try {
+      await expect(dbConnect()).rejects.toThrow('MongoDB is not supported in the Edge runtime');
+    } finally {
+      process.env.NEXT_RUNTIME = originalRuntime;
+    }
   });
 
-  it('throws descriptive tooltip error when MONGODB_URI environment variable is missing', async () => {
+  it('rejects with missing URI error when MONGODB_URI is not defined', async () => {
     const originalUri = process.env.MONGODB_URI;
     delete process.env.MONGODB_URI;
-
-    await expect(dbConnect()).rejects.toThrow('Please define the MONGODB_URI environment variable');
-
-    process.env.MONGODB_URI = originalUri;
+    try {
+      await expect(dbConnect()).rejects.toThrow(
+        'Please define the MONGODB_URI environment variable'
+      );
+    } finally {
+      if (originalUri === undefined) {
+        delete process.env.MONGODB_URI;
+      } else {
+        process.env.MONGODB_URI = originalUri;
+      }
+    }
   });
 
-  it('maintains correct connection lifecycle hierarchy (connect → disconnect) as logical tab order', async () => {
-    expect(typeof dbConnect).toBe('function');
-    expect(typeof dbDisconnect).toBe('function');
-
-    const disconnectReturns = dbDisconnect();
-    expect(disconnectReturns).toBeInstanceOf(Promise);
+  it('dbDisconnect returns a Promise that resolves', async () => {
+    await expect(dbDisconnect()).resolves.toBeUndefined();
   });
 });
