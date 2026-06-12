@@ -7,6 +7,7 @@ import {
   generateRateLimitSVG,
   generateHeatmapSVG,
   generatePulseSVG,
+  generateVersusSVG,
   particleCount,
   escapeXML,
   getSizeScale,
@@ -65,6 +66,26 @@ describe('generateSVG', () => {
     expect(svg).not.toContain('CURRENT_STREAK');
     expect(svg).not.toContain('ANNUAL_SYNC_TOTAL');
     expect(svg).not.toContain('PEAK_STREAK');
+  });
+
+  it('gives the scan line an explicit fill on static themes so it stays visible', () => {
+    const svg = generateSVG(
+      mockStats,
+      {
+        user: 'avi',
+        bg: hexColor('0d1117'),
+        text: hexColor('c9d1d9'),
+        accent: hexColor('58a6ff'),
+        speed: '8s',
+        scale: 'linear',
+      },
+      mockCalendar
+    );
+
+    assertValidSVG(svg);
+    // Static themes do not define the .cp-accent-fill CSS rule, so the scan line must
+    // carry an explicit hex fill or it inherits fill="none" and disappears.
+    expect(svg).toMatch(/fill="#[0-9a-fA-F]{3,8}"\s+class="cp-accent-fill scan-line"/);
   });
 
   it('renders stats labels when hide_stats is false', () => {
@@ -664,7 +685,7 @@ describe('generateSVG', () => {
 
     it('renders the username in uppercase and escapes XML-reserved characters', () => {
       const svg = generateNotFoundSVG('octocat&co', '#0d1117', '#00ffaa', '#ffffff', 8);
-      expect(svg).toContain('OCTOCAT&amp;CO');
+      expect(svg).toContain('OCTOCATCO');
     });
 
     it('displays the "NOT FOUND" text label', () => {
@@ -1396,6 +1417,90 @@ describe('shading', () => {
     expect(svg).toContain('00ffaa');
   });
 });
+
+describe('dim_weekends', () => {
+  const weekendCalendar = {
+    weeks: [
+      {
+        contributionDays: [
+          { contributionCount: 10, date: '2024-06-08' }, // Saturday (6)
+          { contributionCount: 10, date: '2024-06-09' }, // Sunday (0)
+          { contributionCount: 10, date: '2024-06-10' }, // Monday (1)
+        ],
+      },
+    ],
+  } as ContributionCalendar;
+
+  const mockStats: StreakStats = {
+    currentStreak: 3,
+    longestStreak: 3,
+    totalContributions: 30,
+    todayDate: '2024-06-10',
+  };
+
+  it('applies dimmed-tower class and opacity: 0.3 on weekends when dim_weekends=true', () => {
+    const svg = generateSVG(
+      mockStats,
+      { user: 'avi', dim_weekends: true } as unknown as BadgeParams,
+      weekendCalendar
+    );
+
+    // The stylesheet should define .dimmed-tower rule
+    expect(svg).toContain('.dimmed-tower { opacity: 0.3; }');
+
+    // Saturday and Sunday towers must have dimmed-tower class applied
+    expect(svg).toContain('data-date="2024-06-08"');
+    expect(svg).toContain('data-date="2024-06-09"');
+    expect(svg).toContain('data-date="2024-06-10"');
+
+    // Verify parent group of 2024-06-08 / 2024-06-09 contains class="dimmed-tower" style="opacity: 0.3;"
+    // Check Saturday
+    const satSegment = svg.slice(
+      svg.indexOf('data-date="2024-06-08"') - 300,
+      svg.indexOf('data-date="2024-06-08"') + 100
+    );
+    expect(satSegment).toContain('class="dimmed-tower"');
+    expect(satSegment).toContain('style="opacity: 0.3;"');
+
+    // Check Sunday
+    const sunSegment = svg.slice(
+      svg.indexOf('data-date="2024-06-09"') - 300,
+      svg.indexOf('data-date="2024-06-09"') + 100
+    );
+    expect(sunSegment).toContain('class="dimmed-tower"');
+    expect(sunSegment).toContain('style="opacity: 0.3;"');
+
+    // Monday tower must NOT be dimmed
+    const monSegment = svg.slice(
+      svg.indexOf('data-date="2024-06-10"') - 300,
+      svg.indexOf('data-date="2024-06-10"') + 100
+    );
+    expect(monSegment).not.toContain('class="dimmed-tower"');
+    expect(monSegment).not.toContain('style="opacity: 0.3;"');
+
+    // Particles of weekend towers must also be wrapped in dimmed-tower group
+    // The calendar contribution count is 10, which triggers particle generation.
+    // Verify that the particle group for Saturday/Sunday is wrapped in the dimmed-tower group.
+    const particlesSatIndex = svg.indexOf(
+      'class="heat-particles"',
+      svg.indexOf('data-date="2024-06-08"')
+    );
+    const wrappedParticlesSat = svg.slice(particlesSatIndex - 100, particlesSatIndex);
+    expect(wrappedParticlesSat).toContain('class="dimmed-tower"');
+    expect(wrappedParticlesSat).toContain('style="opacity: 0.3;"');
+  });
+
+  it('does not apply dimmed-tower class when dim_weekends=false', () => {
+    const svg = generateSVG(
+      mockStats,
+      { user: 'avi', dim_weekends: false } as unknown as BadgeParams,
+      weekendCalendar
+    );
+
+    // Verify no group or element has dimmed-tower class
+    expect(svg).not.toContain('class="dimmed-tower"');
+  });
+});
 describe('escapeXML', () => {
   it('escapes ampersands (&)', () => {
     expect(escapeXML('foo & bar')).toBe('foo &amp; bar');
@@ -2072,5 +2177,185 @@ describe('generatePulseSVG accessibility', () => {
       const svg = generatePulseSVG(mockStats, autoParams, mockCalendar);
       assertValidSVG(svg);
     });
+  });
+});
+
+// ── generateVersusSVG ───────────────────────────────────────────────────────
+
+describe('generateVersusSVG', () => {
+  const stats1: StreakStats = {
+    currentStreak: 5,
+    longestStreak: 10,
+    totalContributions: 200,
+    todayDate: '2024-06-12',
+  };
+  const stats2: StreakStats = {
+    currentStreak: 3,
+    longestStreak: 7,
+    totalContributions: 150,
+    todayDate: '2024-06-12',
+  };
+
+  const weeks: ContributionCalendar['weeks'] = Array.from({ length: 5 }, (_, w) => ({
+    contributionDays: Array.from({ length: 7 }, (_, d) => ({
+      contributionCount: (w * 7 + d) % 8,
+      date: `2024-05-${String(w * 7 + d + 1).padStart(2, '0')}`,
+    })),
+  })) as ContributionCalendar['weeks'];
+
+  const mockCalendar: ContributionCalendar = { weeks } as ContributionCalendar;
+
+  const baseParams: BadgeParams = {
+    user: 'alice',
+    versus: 'bob',
+  } as unknown as BadgeParams;
+
+  it('renders valid SVG with opening and closing svg tags', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('<svg');
+    expect(svg).toContain('</svg>');
+  });
+
+  it('viewBox width is double the single panel width', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    const match = svg.match(/viewBox="0 0 (\d+) (\d+)"/);
+    expect(Number(match![1])).toBeGreaterThan(Number(match![2]));
+  });
+
+  it('contains VS divider circle and text', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('>VS<');
+    expect(svg).toContain('<circle');
+  });
+
+  it('renders both usernames', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('ALICE');
+    expect(svg).toContain('BOB');
+  });
+
+  it('includes role="img" for accessibility', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('role="img"');
+  });
+
+  it('includes aria-labelledby and aria-describedby', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('aria-labelledby="cp-title-alice_vs_bob"');
+    expect(svg).toContain('aria-describedby="cp-desc-alice_vs_bob"');
+  });
+
+  it('includes <title> with both usernames', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('CommitPulse Versus Stats: alice vs bob');
+  });
+
+  it('includes <desc> with contribution counts for both users', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('200');
+    expect(svg).toContain('150');
+  });
+
+  it('winner (stats1) gets crown emoji', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('👑');
+  });
+
+  it('no crown when tied', () => {
+    const tied: StreakStats = { ...stats1, totalContributions: 150 };
+    const svg = generateVersusSVG(tied, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).not.toContain('👑');
+  });
+
+  it('renders dashed divider line between panels', () => {
+    const svg = generateVersusSVG(stats1, stats2, baseParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('stroke-dasharray="4 4"');
+  });
+
+  it('escapes XML-reserved characters in usernames', () => {
+    const params = { ...baseParams, user: '<alice&>', versus: '"bob"' } as unknown as BadgeParams;
+    const svg = generateVersusSVG(stats1, stats2, params, mockCalendar, mockCalendar);
+    expect(svg).not.toContain('<alice&>');
+    expect(svg).toContain('&lt;alice&amp;&gt;');
+  });
+
+  it('uses transparent background when hideBackground is true', () => {
+    const params = { ...baseParams, hideBackground: true } as unknown as BadgeParams;
+    const svg = generateVersusSVG(stats1, stats2, params, mockCalendar, mockCalendar);
+    expect(svg).toContain('transparent');
+  });
+});
+
+// ── generateVersusSVG auto-theme ────────────────────────────────────────────
+
+describe('generateVersusSVG auto-theme', () => {
+  const stats1: StreakStats = {
+    currentStreak: 5,
+    longestStreak: 10,
+    totalContributions: 200,
+    todayDate: '2024-06-12',
+  };
+  const stats2: StreakStats = {
+    currentStreak: 3,
+    longestStreak: 7,
+    totalContributions: 150,
+    todayDate: '2024-06-12',
+  };
+
+  const weeks: ContributionCalendar['weeks'] = Array.from({ length: 5 }, (_, w) => ({
+    contributionDays: Array.from({ length: 7 }, (_, d) => ({
+      contributionCount: (w * 7 + d) % 8,
+      date: `2024-05-${String(w * 7 + d + 1).padStart(2, '0')}`,
+    })),
+  })) as ContributionCalendar['weeks'];
+
+  const mockCalendar: ContributionCalendar = { weeks } as ContributionCalendar;
+
+  const autoParams: BadgeParams = {
+    user: 'alice',
+    versus: 'bob',
+    autoTheme: true,
+  } as unknown as BadgeParams;
+
+  it('renders valid SVG', () => {
+    const svg = generateVersusSVG(stats1, stats2, autoParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('<svg');
+    expect(svg).toContain('</svg>');
+  });
+
+  it('injects CSS custom properties for auto-theme', () => {
+    const svg = generateVersusSVG(stats1, stats2, autoParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('--cp-bg');
+    expect(svg).toContain('--cp-accent');
+    expect(svg).toContain('--cp-text');
+  });
+
+  it('includes prefers-color-scheme media query', () => {
+    const svg = generateVersusSVG(stats1, stats2, autoParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('prefers-color-scheme: dark');
+  });
+
+  it('uses CSS class fills instead of hardcoded hex colors', () => {
+    const svg = generateVersusSVG(stats1, stats2, autoParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('cp-accent-fill');
+    expect(svg).toContain('cp-bg-fill');
+  });
+
+  it('contains VS divider and both usernames', () => {
+    const svg = generateVersusSVG(stats1, stats2, autoParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('>VS<');
+    expect(svg).toContain('ALICE');
+    expect(svg).toContain('BOB');
+  });
+
+  it('includes aria-labelledby and aria-describedby', () => {
+    const svg = generateVersusSVG(stats1, stats2, autoParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('aria-labelledby="cp-title-alice_vs_bob"');
+    expect(svg).toContain('aria-describedby="cp-desc-alice_vs_bob"');
+  });
+
+  it('winner gets crown emoji in auto-theme', () => {
+    const svg = generateVersusSVG(stats1, stats2, autoParams, mockCalendar, mockCalendar);
+    expect(svg).toContain('👑');
   });
 });
