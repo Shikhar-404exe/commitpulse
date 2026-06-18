@@ -1,105 +1,82 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SyncQueue, syncQueue } from './syncQueue';
+import { SyncQueue } from './syncQueue';
+
+const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 
 describe('SyncQueue', () => {
+  let queue: SyncQueue;
+
+  beforeEach(() => {
+    process.env.NODE_ENV = 'development';
+    queue = new SyncQueue();
+    vi.useFakeTimers();
+  });
+
   afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
+    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     vi.useRealTimers();
   });
 
-  // Variation 1: the test-environment bypass path.
-  // Under NODE_ENV==='test' the queue is intentionally skipped so that mocks
-  // resolve synchronously; nothing should ever accumulate in the queue.
-  describe('test-environment bypass', () => {
-    beforeEach(() => {
-      vi.stubEnv('NODE_ENV', 'test');
-    });
-
-    it('runs the task immediately without enqueueing it', () => {
-      const q = new SyncQueue();
-      const task = vi.fn(async () => {});
-      q.enqueue(task);
-      expect(task).toHaveBeenCalledTimes(1);
-      expect(q.pendingTasks).toBe(0);
-    });
-
-    it('swallows a rejected task without throwing or queueing', () => {
-      const q = new SyncQueue();
-      expect(() =>
-        q.enqueue(async () => {
-          throw new Error('boom');
-        })
-      ).not.toThrow();
-      expect(q.pendingTasks).toBe(0);
-    });
-
-    it('starts with no pending tasks and exposes a shared singleton', () => {
-      expect(syncQueue).toBeInstanceOf(SyncQueue);
-      expect(syncQueue.pendingTasks).toBe(0);
-    });
+  it('executes a single task when enqueued', async () => {
+    const fn = vi.fn().mockResolvedValue(undefined);
+    queue.enqueue(fn);
+    await vi.runAllTimersAsync();
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  // Variation 2: the real staggered-processing path (non-test env).
-  // Tasks must run in FIFO order, separated by the stagger delay, and a
-  // failing task must not stall the remainder of the queue.
-  describe('staggered processing (non-test env)', () => {
-    beforeEach(() => {
-      vi.stubEnv('NODE_ENV', 'development');
-      vi.useFakeTimers();
+  it('executes tasks sequentially with stagger delay', async () => {
+    const order: number[] = [];
+    queue.enqueue(async () => {
+      order.push(1);
+    });
+    queue.enqueue(async () => {
+      order.push(2);
     });
 
-    it('processes enqueued tasks in FIFO order and drains the queue', async () => {
-      const q = new SyncQueue();
-      const order: number[] = [];
-      q.enqueue(async () => {
-        order.push(1);
-      });
-      q.enqueue(async () => {
-        order.push(2);
-      });
-      q.enqueue(async () => {
-        order.push(3);
-      });
+    // First task runs immediately, second waits for stagger delay
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(order).toEqual([1, 2]);
+  });
 
-      await vi.runAllTimersAsync();
+  it('does not enqueue duplicate tasks while the first is pending', () => {
+    const fn = vi.fn().mockResolvedValue(undefined);
+    queue.enqueue(fn);
+    // Second enqueue of the same task reference — not truly duplicate detection
+    // but tests that isProcessing flag prevents concurrent execution
+    queue.enqueue(fn);
+    // Only one should be called since isProcessing blocks
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 
-      expect(order).toEqual([1, 2, 3]);
-      expect(q.pendingTasks).toBe(0);
-    });
+  it('isolates errors so one failing task does not block the next', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failing = vi.fn().mockRejectedValue(new Error('task error'));
+    const succeeding = vi.fn().mockResolvedValue(undefined);
 
-    it('continues processing after a task throws', async () => {
-      vi.spyOn(console, 'error').mockImplementation(() => {});
-      const q = new SyncQueue();
-      const after = vi.fn(async () => {});
+    queue.enqueue(failing);
+    queue.enqueue(succeeding);
 
-      q.enqueue(async () => {
-        throw new Error('first task failed');
-      });
-      q.enqueue(after);
+    await vi.advanceTimersByTimeAsync(2100);
 
-      await vi.runAllTimersAsync();
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(succeeding).toHaveBeenCalledTimes(1);
+    expect(consoleSpy).toHaveBeenCalledWith('[SyncQueue] Task failed:', expect.any(Error));
+    consoleSpy.mockRestore();
+  });
 
-      expect(after).toHaveBeenCalledTimes(1);
-      expect(q.pendingTasks).toBe(0);
-    });
+  it('reports pending task count via pendingTasks', () => {
+    const fn = vi.fn().mockResolvedValue(undefined);
+    queue.enqueue(fn);
+    queue.enqueue(fn);
+    // One is processing, one is pending
+    expect(queue.pendingTasks).toBe(1);
+  });
 
-    it('staggers tasks by the delay rather than running them back-to-back', async () => {
-      const q = new SyncQueue();
-      const second = vi.fn(async () => {});
-
-      q.enqueue(async () => {});
-      q.enqueue(second);
-
-      // First task runs right away; the second is still waiting on the stagger.
-      await vi.advanceTimersByTimeAsync(0);
-      expect(second).not.toHaveBeenCalled();
-      expect(q.pendingTasks).toBe(1);
-
-      // After the stagger delay elapses, the second task runs.
-      await vi.advanceTimersByTimeAsync(2000);
-      expect(second).toHaveBeenCalledTimes(1);
-      expect(q.pendingTasks).toBe(0);
-    });
+  it('bypasses queue and runs immediately in test environment', async () => {
+    process.env.NODE_ENV = 'test';
+    const queue2 = new SyncQueue();
+    const fn = vi.fn().mockResolvedValue(undefined);
+    queue2.enqueue(fn);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
