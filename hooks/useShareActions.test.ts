@@ -247,4 +247,100 @@ describe('useShareActions', () => {
     expect(mockLinkElement.click).toHaveBeenCalled();
     expect(global.URL.createObjectURL).toHaveBeenCalled();
   });
+
+  it('sets error state and logs when handleCopyLink fails', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(navigator.clipboard.writeText).mockRejectedValue(new Error('clipboard denied'));
+
+    const { result } = renderHook(() => useShareActions(mockUsername, mockExportData, mockClose));
+
+    await act(async () => {
+      await result.current.handleCopyLink();
+    });
+
+    expect(result.current.states['copy']).toBe('error');
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[useShareActions] handleCopyLink failed:',
+      expect.any(Error)
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('sets error state when handleDownloadPNG fails', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // Re-mock toPng to reject for this test
+    const { result } = renderHook(() => useShareActions(mockUsername, mockExportData, mockClose));
+    const { toPng } = await import('html-to-image');
+    vi.mocked(toPng).mockRejectedValueOnce(new Error('png generation failed'));
+
+    await act(async () => {
+      await result.current.handleDownloadPNG();
+    });
+
+    expect(result.current.states['png']).toBe('error');
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[useShareActions] handleDownloadPNG failed:',
+      expect.any(Error)
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('sets error state when handleDownloadSVG fails', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(global.fetch).mockRejectedValue(new Error('network error'));
+
+    const { result } = renderHook(() => useShareActions(mockUsername, mockExportData, mockClose));
+
+    await act(async () => {
+      await result.current.handleDownloadSVG();
+    });
+
+    expect(result.current.states['svg']).toBe('error');
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[useShareActions] handleDownloadSVG failed:',
+      expect.any(Error)
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('sets error state when handleCopyMarkdown fails', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(navigator.clipboard.writeText).mockRejectedValue(new Error('clipboard denied'));
+
+    const { result } = renderHook(() => useShareActions(mockUsername, mockExportData, mockClose));
+
+    await act(async () => {
+      await result.current.handleCopyMarkdown();
+    });
+
+    expect(result.current.states['markdown']).toBe('error');
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[useShareActions] handleCopyMarkdown failed:',
+      expect.any(Error)
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('sets error state when handleDownloadJSON fails due to serialization error', () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Use data with a BigInt value that JSON.stringify cannot serialize
+    const badData = {
+      ...mockExportData,
+      stats: { ...mockExportData.stats, totalContributions: BigInt(999) as unknown as number },
+    };
+
+    const { result } = renderHook(() => useShareActions(mockUsername, badData, mockClose));
+
+    act(() => {
+      result.current.handleDownloadJSON();
+    });
+
+    expect(result.current.states['json']).toBe('error');
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[useShareActions] handleDownloadJSON failed:',
+      expect.any(Error)
+    );
+    consoleSpy.mockRestore();
+  });
 });
