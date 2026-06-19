@@ -2662,3 +2662,29 @@ describe('getWrappedData weekendRatio', () => {
     expect(result.weekendRatio).toBe(0);
   });
 });
+
+describe('configurable env vars', () => {
+  it('GITHUB_CACHE_TTL_MS exports the default value', () => {
+    expect(GITHUB_CACHE_TTL_MS).toBe(300000);
+  });
+
+  it('source code references env var names for all configurable constants', async () => {
+    const { promises: fsp } = await import('fs');
+    const src = await fsp.readFile('lib/github.ts', 'utf8');
+    const envVars = [
+      'GITHUB_MAX_RETRIES',
+      'GITHUB_BASE_DELAY_MS',
+      'GITHUB_MAX_RETRY_DELAY_MS',
+      'GITHUB_GRAPHQL_TIMEOUT_MS',
+      'GITHUB_REST_TIMEOUT_MS',
+      'GITHUB_ORG_MEMBER_LIMIT',
+      'GITHUB_CACHE_TTL_MS',
+      'GITHUB_FETCH_TIMEOUT_MS',
+      'GITHUB_LONG_CACHE_TTL_MS',
+      'GITHUB_MAX_PAGES',
+    ];
+    for (const v of envVars) {
+      expect(src).toContain(v);
+    }
+  });
+});
