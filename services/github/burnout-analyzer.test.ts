@@ -12,23 +12,58 @@ vi.mock('@/lib/github', async () => {
   };
 });
 
+describe('BurnoutAnalyzer env validation', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('warns when GEMINI_API_KEY is missing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('GEMINI_API_KEY', '');
+    vi.resetModules();
+    await import('./burnout-analyzer');
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[BurnoutAnalyzer] GEMINI_API_KEY is missing or invalid — AI recommendations will return empty'
+    );
+    warnSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it('warns when GEMINI_API_KEY is whitespace-only', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('GEMINI_API_KEY', '   ');
+    vi.resetModules();
+    await import('./burnout-analyzer');
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[BurnoutAnalyzer] GEMINI_API_KEY is missing or invalid — AI recommendations will return empty'
+    );
+    warnSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it('does not warn when GEMINI_API_KEY is valid', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubEnv('GEMINI_API_KEY', 'valid-key-12345');
+    vi.resetModules();
+    await import('./burnout-analyzer');
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+});
+
 describe('BurnoutAnalyzer Service', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    // Re-assign fetch mock before each test to prevent the vitest.setup.ts
-    // afterEach guard from leaking guardedFetch into subsequent tests.
     global.fetch = fetchMock;
   });
 
   it('correctly calculates repository metrics, burnout risk levels, and inactivity alerts', async () => {
-    // Mock contributor statistics data from GitHub API
     const mockStats = [
       {
         author: { login: 'key-dev', avatar_url: 'https://avatar/key-dev' },
         total: 100,
         weeks: Array.from({ length: 52 }, (_, i) => {
-          // Last 12 weeks are index 40-51
-          // Let's create a highly active developer with 10 commits per week (intense workload)
           const isLast12 = i >= 40;
           return {
             w: 1600000000 + i * 7 * 24 * 3600,
@@ -42,7 +77,6 @@ describe('BurnoutAnalyzer Service', () => {
         author: { login: 'churn-dev', avatar_url: 'https://avatar/churn-dev' },
         total: 30,
         weeks: Array.from({ length: 52 }, (_, i) => {
-          // Historically active (average 2 commits/week), but quiet in the last 3 weeks
           const isSilentPeriod = i >= 49;
           return {
             w: 1600000000 + i * 7 * 24 * 3600,
@@ -67,17 +101,14 @@ describe('BurnoutAnalyzer Service', () => {
     expect(report.totalCommits).toBe(130);
     expect(report.totalContributors).toBe(2);
 
-    // key-dev has 100/130 = 76.9% commits. Bus factor should be 1 (since 76.9% >= 70%)
     expect(report.busFactor).toBe(1);
     expect(report.dependencyRisk).toBe('High');
 
-    // Check key-dev has High burnout risk due to 12 consecutive high intensity weeks
     const keyDevMetric = report.contributors.find((c) => c.username === 'key-dev');
     expect(keyDevMetric).toBeDefined();
     expect(keyDevMetric?.riskLevel).toBe('High');
     expect(keyDevMetric?.burnoutScore).toBeGreaterThan(70);
 
-    // Check churn-dev has inactivity alerts triggered
     const churnAlert = report.inactivityAlerts.find((a) => a.username === 'churn-dev');
     expect(churnAlert).toBeDefined();
     expect(churnAlert?.weeksSilent).toBe(3);
@@ -105,7 +136,7 @@ describe('BurnoutAnalyzer Service', () => {
       headers: new Headers(),
     } as Response);
 
-    process.env.GEMINI_API_KEY = 'mock-gemini-key';
+    vi.stubEnv('GEMINI_API_KEY', 'mock-gemini-key');
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -119,6 +150,6 @@ describe('BurnoutAnalyzer Service', () => {
     expect(report).toBeDefined();
     expect(report.recommendations.length).toBeGreaterThan(0);
 
-    delete process.env.GEMINI_API_KEY;
+    vi.unstubAllEnvs();
   });
 });

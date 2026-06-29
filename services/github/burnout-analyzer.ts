@@ -59,6 +59,16 @@ export interface BurnoutReport {
 
 const reportCache = new DistributedCache<BurnoutReport>(200);
 
+function validateEnv(): void {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key || key.trim() === '') {
+    console.warn(
+      '[BurnoutAnalyzer] GEMINI_API_KEY is missing or invalid — AI recommendations will return empty'
+    );
+  }
+}
+validateEnv();
+
 let currentTokenIndex = 0;
 function getHeaders(userToken?: string) {
   const headers: Record<string, string> = {
