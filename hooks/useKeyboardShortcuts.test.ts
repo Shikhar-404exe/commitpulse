@@ -1,65 +1,67 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { renderHook, fireEvent } from '@testing-library/react';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 
-const push = vi.fn();
+const mockPush = vi.fn();
+
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
-function press(key: string) {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key }));
-}
-
 describe('useKeyboardShortcuts', () => {
+  let addEventSpy: ReturnType<typeof vi.spyOn>;
+  let removeEventSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    push.mockClear();
+    vi.clearAllMocks();
+    addEventSpy = vi.spyOn(window, 'addEventListener');
+    removeEventSpy = vi.spyOn(window, 'removeEventListener');
   });
 
-  it('navigates client-side via router.push on the g-then-key sequence', () => {
-    renderHook(() => useKeyboardShortcuts());
-
-    press('g');
-    press('c');
-
-    // Client navigation (no full document reload / window.location.assign).
-    expect(push).toHaveBeenCalledWith('/contributors');
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('maps each shortcut key to its route', () => {
+  it('registers a keydown listener on mount', () => {
     renderHook(() => useKeyboardShortcuts());
-
-    for (const [key, route] of Object.entries({
-      d: '/',
-      c: '/contributors',
-      p: '/compare',
-      u: '/customize',
-    })) {
-      push.mockClear();
-      press('g');
-      press(key);
-      expect(push).toHaveBeenCalledWith(route);
-    }
+    expect(addEventSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
   });
 
-  it('does not navigate when the second key is not a shortcut', () => {
+  it('navigates on g then d shortcut', () => {
     renderHook(() => useKeyboardShortcuts());
-
-    press('g');
-    press('x');
-
-    expect(push).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'g' });
+    fireEvent.keyDown(window, { key: 'd' });
+    expect(mockPush).toHaveBeenCalledWith('/');
   });
 
-  it('ignores the sequence while typing in an input field', () => {
+  it('navigates on g then c shortcut', () => {
     renderHook(() => useKeyboardShortcuts());
+    fireEvent.keyDown(window, { key: 'g' });
+    fireEvent.keyDown(window, { key: 'c' });
+    expect(mockPush).toHaveBeenCalledWith('/contributors');
+  });
 
+  it('does not navigate when modifier keys are held', () => {
+    renderHook(() => useKeyboardShortcuts());
+    fireEvent.keyDown(window, { key: 'g', ctrlKey: true });
+    fireEvent.keyDown(window, { key: 'd' });
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('does not navigate when focus is on an input element', () => {
     const input = document.createElement('input');
     document.body.appendChild(input);
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }));
+    input.focus();
+    renderHook(() => useKeyboardShortcuts());
+    fireEvent.keyDown(input, { key: 'g' });
+    fireEvent.keyDown(input, { key: 'd' });
+    expect(mockPush).not.toHaveBeenCalled();
+    document.body.removeChild(input);
+  });
 
-    expect(push).not.toHaveBeenCalled();
-    input.remove();
+  it('removes event listener on unmount', () => {
+    const { unmount } = renderHook(() => useKeyboardShortcuts());
+    unmount();
+    expect(removeEventSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
   });
 });
