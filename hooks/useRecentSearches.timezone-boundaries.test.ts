@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRecentSearches, STORAGE_KEY } from './useRecentSearches';
 
